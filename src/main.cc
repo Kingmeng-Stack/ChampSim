@@ -20,6 +20,7 @@
 #include <functional>
 #include <getopt.h>
 #include <iomanip>
+#include <math.h>
 #include <signal.h>
 #include <string.h>
 #include <vector>
@@ -35,6 +36,11 @@
 
 uint8_t warmup_complete[NUM_CPUS] = {}, simulation_complete[NUM_CPUS] = {}, all_warmup_complete = 0, all_simulation_complete = 0,
         MAX_INSTR_DESTINATIONS = NUM_INSTR_DESTINATIONS, knob_cloudsuite = 0, knob_low_bandwidth = 0;
+uint32_t LIMIT_THRESHOLD = 0;
+std::array<CACHE*, NUM_CACHES> monitor_caches;
+std::array<uint64_t, NUM_CACHES> Previous_value;
+std::array<std::string, NUM_CPUS> logs;
+uint32_t CRYCLE = 0;
 
 uint64_t warmup_instructions = 1000000, simulation_instructions = 10000000;
 
@@ -246,6 +252,7 @@ void reset_cache_stats(uint32_t cpu, CACHE* cache)
     cache->sim_access[cpu][i] = 0;
     cache->sim_hit[cpu][i] = 0;
     cache->sim_miss[cpu][i] = 0;
+    cache->block_count[cpu][i] = 0;
   }
 
   cache->pf_requested = 0;
@@ -301,8 +308,18 @@ void finish_warmup()
 
     for (auto it = caches.rbegin(); it != caches.rend(); ++it)
       reset_cache_stats(i, *it);
+    monitor_caches[i]->end_record(i);
   }
   cout << endl;
+
+  {
+    for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
+      auto monitor = (*it)->monitor;
+      if (monitor != nullptr) {
+        monitor->save_and_clear(std::string("./"), std::string("WARMUP"), false);
+      }
+    }
+  }
 
   // reset DRAM stats
   for (uint32_t i = 0; i < DRAM_CHANNELS; i++) {
@@ -321,6 +338,12 @@ void signal_handler(int signal)
 
 int main(int argc, char** argv)
 {
+  {
+    for (int i = 0; i < NUM_CPUS; i++) {
+      Previous_value[i] = 0;
+      logs[i] = std::string("[");
+    }
+  }
   // interrupt signal hanlder
   struct sigaction sigIntHandler;
   sigIntHandler.sa_handler = signal_handler;
@@ -334,9 +357,14 @@ int main(int argc, char** argv)
   uint8_t show_heartbeat = 1;
 
   // check to see if knobs changed using getopt_long()
+  std::vector<std::string> performance_data_file;
+  std::vector<uint32_t> block_sizes;
   int traces_encountered = 0;
   static struct option long_options[] = {{"warmup_instructions", required_argument, 0, 'w'},
                                          {"simulation_instructions", required_argument, 0, 'i'},
+                                         {"limit_threshold", required_argument, 0, 'l'},
+                                         {"performance_data", required_argument, 0, 'p'},
+                                         {"block_sizes", required_argument, 0, 'b'},
                                          {"hide_heartbeat", no_argument, 0, 'h'},
                                          {"cloudsuite", no_argument, 0, 'c'},
                                          {"traces", no_argument, &traces_encountered, 1},
@@ -351,6 +379,29 @@ int main(int argc, char** argv)
     case 'i':
       simulation_instructions = atol(optarg);
       break;
+    case 'l':
+      LIMIT_THRESHOLD = atoi(optarg);
+      if (LIMIT_THRESHOLD <= 0) {
+        cout << "Limit threshold must be greater than 0" << endl;
+        abort();
+      }
+      break;
+    case 'b': {
+      block_sizes.push_back(std::stoi(optarg));
+      // find the first non-option argument (not starting with '-')
+      while (optind < argc && argv[optind][0] != '-') {
+        block_sizes.push_back(std::stoi(argv[optind++]));
+      }
+
+    } break;
+    case 'p': {
+      performance_data_file.push_back(optarg);
+      // find the first non-option argument (not starting with '-')
+      while (optind < argc && argv[optind][0] != '-') {
+        performance_data_file.push_back(argv[optind++]);
+      }
+
+    } break;
     case 'h':
       show_heartbeat = 0;
       break;
@@ -383,10 +434,12 @@ int main(int argc, char** argv)
   std::cout << "VirtualMemory page size: " << PAGE_SIZE << " log2_page_size: " << LOG2_PAGE_SIZE << std::endl;
 
   std::cout << std::endl;
+  std::vector<std::string> trace_names;
   for (int i = optind; i < argc; i++) {
-    std::cout << "CPU " << traces.size() << " runs " << argv[i] << std::endl;
+    std::cout << "CPU " << traces.size() << " runs " << argv[i] << "  perfomance data file: " << ((performance_data_file.size() > traces.size()) ? performance_data_file[traces.size()] : "none") << " block size: " << ((block_sizes.size() > traces.size()) ? block_sizes[traces.size()] : BLOCK_SIZE) << std::endl;
 
     traces.push_back(get_tracereader(argv[i], traces.size(), knob_cloudsuite));
+    trace_names.push_back(std::string(argv[i]).substr(std::string(argv[i]).find_last_of("/") + 1));
 
     if (traces.size() > NUM_CPUS) {
       printf("\n*** Too many traces for the configured number of cores ***\n\n");
@@ -408,6 +461,33 @@ int main(int argc, char** argv)
   for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
     (*it)->impl_prefetcher_initialize();
     (*it)->impl_replacement_initialize();
+  }
+  for (int i = 0; i < NUM_CPUS; i++) {
+    std::string name = "cpu" + std::to_string(i) + "_L1D";
+    for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
+      auto cache = *it;
+      if (cache->NAME == name) {
+        monitor_caches[i] = cache;
+        std::string performance_data = "";
+        {
+          if (performance_data_file.size() > i) {
+            // read all data from the performance data file
+            std::ifstream file(performance_data_file[i]);
+            std::string str;
+            std::stringstream buf;
+            buf << file.rdbuf();
+            performance_data = buf.str();
+          }
+        }
+        if (performance_data != "") {
+          cache->monitor_initialize(i, LIMIT_THRESHOLD, cache->NAME, trace_names[i], performance_data, BLOCK_SIZE);
+        } else
+        {
+          cache->monitor_initialize(i, LIMIT_THRESHOLD, cache->NAME, trace_names[i], "", ((block_sizes.size() > i) ? block_sizes[i] : BLOCK_SIZE));
+        }
+        break;
+      }
+    }
   }
 
   // simulation entry point
@@ -439,23 +519,36 @@ int main(int argc, char** argv)
       while (ooo_cpu[i]->fetch_stall == 0 && ooo_cpu[i]->instrs_to_read_this_cycle > 0) {
         ooo_cpu[i]->init_instruction(traces[i]->get());
       }
-
+      // && (ooo_cpu[i]->next_print_instruction != Previous_value[i] || Previous_value[i] ==0)
       // heartbeat information
-      if (show_heartbeat && (ooo_cpu[i]->num_retired >= ooo_cpu[i]->next_print_instruction)) {
+      if (show_heartbeat && monitor_caches[i] != nullptr && monitor_caches[i]->sim_access[i][LOAD]!= 0 && monitor_caches[i]->sim_access[i][LOAD] % LIMIT_THRESHOLD == 0) {
+        //std::cout<< "--- Heartbeat CPU " << i << " Previous_value " << Previous_value[i] << " next_print_instruction " << ooo_cpu[i]->next_print_instruction << std::endl;
+        if (Previous_value[i] == monitor_caches[i]->sim_access[i][LOAD])
+        {
+          //std::cout<< "--- Heartbeat CPU " << i << " Previous_value " << Previous_value[i] << " next_print_instruction " << ooo_cpu[i]->next_print_instruction << std::endl;
+                    continue;
+        }
+
+        
         float cumulative_ipc;
         if (warmup_complete[i])
           cumulative_ipc = (1.0 * (ooo_cpu[i]->num_retired - ooo_cpu[i]->begin_sim_instr)) / (ooo_cpu[i]->current_cycle - ooo_cpu[i]->begin_sim_cycle);
         else
           cumulative_ipc = (1.0 * ooo_cpu[i]->num_retired) / ooo_cpu[i]->current_cycle;
         float heartbeat_ipc = (1.0 * ooo_cpu[i]->num_retired - ooo_cpu[i]->last_sim_instr) / (ooo_cpu[i]->current_cycle - ooo_cpu[i]->last_sim_cycle);
+        auto next_cycle_bs = monitor_caches[i]->record_point(i, heartbeat_ipc, cumulative_ipc);
 
         cout << "Heartbeat CPU " << i << " instructions: " << ooo_cpu[i]->num_retired << " cycles: " << ooo_cpu[i]->current_cycle;
         cout << " heartbeat IPC: " << heartbeat_ipc << " cumulative IPC: " << cumulative_ipc;
+        cout << " accesses: " << monitor_caches[i]->sim_access[i][LOAD] << " misses: " << monitor_caches[i]->sim_miss[i][LOAD];
+        cout << " heartbeat: " << ooo_cpu[i]->next_print_instruction << " crycle: " << monitor_caches[i]->sim_access[i][LOAD]/LIMIT_THRESHOLD;
+        cout << " next_cycle_bs: " << next_cycle_bs << " is_warmup: " << monitor_caches[i]->get_monitor()->warmup_flag;
         cout << " (Simulation time: " << elapsed_hour << " hr " << elapsed_minute << " min " << elapsed_second << " sec) " << endl;
-        ooo_cpu[i]->next_print_instruction += STAT_PRINTING_PERIOD;
 
         ooo_cpu[i]->last_sim_instr = ooo_cpu[i]->num_retired;
         ooo_cpu[i]->last_sim_cycle = ooo_cpu[i]->current_cycle;
+        Previous_value[i] = monitor_caches[i]->sim_access[i][LOAD];
+        // logs[i] += std::to_string(heartbeat_ipc) + ",";
       }
 
       // check for warmup
@@ -483,6 +576,66 @@ int main(int argc, char** argv)
 
         for (auto it = caches.rbegin(); it != caches.rend(); ++it)
           record_roi_stats(i, *it);
+        monitor_caches[i]->end_record(i);
+      }
+    }
+  }
+
+  {
+    for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
+      auto monitor = (*it)->monitor;
+      if (monitor != nullptr) {
+        monitor->save_and_clear(std::string("./"), std::string("MAIN"),false);
+      }
+
+      auto cache = (*it);
+      auto access = cache->sim_access;
+      auto miss = cache->sim_miss;
+      auto hit = cache->sim_hit;
+      auto block_count = cache->block_count;
+      {
+        cout << "----------------------------A--------------------------------" << endl;
+        // PRINT CACHE ACCESS THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
+        {
+          cout << "cache " << cache->NAME << " access: " << endl;
+          for (uint32_t i = 0; i < NUM_CPUS; i++) {
+            for (uint32_t j = 0; j < NUM_TYPES; j++) {
+              cout << access[i][j] << " ";
+            }
+            cout << endl;
+          }
+        }
+        // PRINT CACHE MISS THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
+        {
+          cout << "cache " << cache->NAME << " miss: " << endl;
+          for (uint32_t i = 0; i < NUM_CPUS; i++) {
+            for (uint32_t j = 0; j < NUM_TYPES; j++) {
+              cout << miss[i][j] << " ";
+            }
+            cout << endl;
+          }
+        }
+        // PRINT CACHE HIT THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
+        {
+          cout << "cache " << cache->NAME << " hit: " << endl;
+          for (uint32_t i = 0; i < NUM_CPUS; i++) {
+            for (uint32_t j = 0; j < NUM_TYPES; j++) {
+              cout << hit[i][j] << " ";
+            }
+            cout << endl;
+          }
+        }
+        // PRINT CACHE BLOCK COUNT THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
+        {
+          cout << "cache " << cache->NAME << " block count: " << endl;
+          for (uint32_t i = 0; i < NUM_CPUS; i++) {
+            for (uint32_t j = 0; j < NUM_TYPES; j++) {
+              cout << block_count[i][j] << " ";
+            }
+            cout << endl;
+          }
+        }
+        cout << "----------------------------B--------------------------------" << endl;
       }
     }
   }

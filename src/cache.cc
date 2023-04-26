@@ -31,6 +31,50 @@
 extern VirtualMemory vmem;
 extern uint8_t warmup_complete[NUM_CPUS];
 
+// add fuctions
+void CACHE::set_blocksize(uint32_t cpu_id, uint32_t v)
+{
+  std::cout << "set_blocksize: " << v << "  for cache: " << this->NAME << " cpu: " << cpu_id << std::endl;
+  this->BLOCKSIZE = v;
+}
+void CACHE::set_base_cal_block_size_rules(std::vector<uint32_t> v)
+{
+  std::cout << "set_base_cal_block_size_rules";
+  for (auto i : v)
+    std::cout << i << " ";
+  std::cout << "for cache" << this->NAME << std::endl;
+  this->base_cal_block_size_rules = v;
+  this->Stages = v.size();
+}
+void CACHE::monitor_initialize(uint32_t cpu_id, uint64_t limit_threshold, std::string name, std::string trace_name, std::string performance_data, uint32_t v)
+{
+  if (monitor == nullptr)
+  {
+      monitor = new Monitor(cpu_id, limit_threshold, name, trace_name, performance_data, v);
+      this->BLOCKSIZE = monitor->get_block_size();
+      std::cout<< "cache: " << this->NAME << " set  blocksize: " << this->BLOCKSIZE << std::endl;
+  }
+}
+
+void CACHE::end_record(uint32_t cpu)
+{
+  if (monitor == nullptr)
+    return;
+  auto current_cpu = cpu;
+  auto current_cycle_ = current_cycle;
+  auto cpu_retired_instruction_ = ooo_cpu[cpu]->num_branch;
+  auto cpu_current_cycle_ = ooo_cpu[cpu]->current_cycle;
+  auto access = sim_access[cpu][LOAD];
+  auto miss = sim_miss[cpu][LOAD];
+  auto hit = sim_hit[cpu][LOAD];
+  auto block_count_ = block_count[cpu][LOAD];
+  //(uint32_t cpu, uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit, uint64_t miss, uint64_t
+  // block_count)
+  monitor->end_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_);
+}
+
+Monitor* CACHE::get_monitor() { return monitor; }
+
 void CACHE::handle_fill()
 {
   while (writes_available_this_cycle > 0) {
@@ -52,7 +96,7 @@ void CACHE::handle_fill()
     bool success = filllike_miss(set, way, *fill_mshr);
     if (!success)
       return;
-
+    block_count[fill_mshr->cpu][fill_mshr->type]++;
     if (way != NUM_WAY) {
       // update processed packets
       fill_mshr->data = block[set * NUM_WAY + way].data;
@@ -111,6 +155,7 @@ void CACHE::handle_writeback()
 
       if (!success)
         return;
+      block_count[handle_pkt.cpu][handle_pkt.type]++;
     }
 
     // remove this entry from WQ
@@ -289,8 +334,40 @@ bool CACHE::readlike_miss(PACKET& handle_pkt)
     uint64_t pf_base_addr = (virtual_prefetch ? handle_pkt.v_address : handle_pkt.address) & ~bitmask(match_offset_bits ? 0 : OFFSET_BITS);
     handle_pkt.pf_metadata = impl_prefetcher_cache_operate(pf_base_addr, handle_pkt.ip, 0, handle_pkt.type, handle_pkt.pf_metadata);
   }
+  {
+    if (BLOCKSIZE != BLOCK_SIZE && handle_pkt.pf_origin_level < fill_level && BLOCKSIZE % BLOCK_SIZE == 0) {
+        cpu = handle_pkt.cpu;
+        uint64_t pf_base_addr = (virtual_prefetch ? handle_pkt.v_address : handle_pkt.address) & ~bitmask(match_offset_bits ? 0 : OFFSET_BITS);
+        for (int i = 1; i < BLOCKSIZE / BLOCK_SIZE; i++) {
+          uint64_t pf_addr = pf_base_addr + i * BLOCK_SIZE;
+          prefetch_line(pf_addr, true, 0);
+        }
+    }
+    else
+    {
+      //std::cout << "ERROR: BLOCKSIZE: " << BLOCKSIZE << " BLOCK_SIZE: " << BLOCK_SIZE << " handle_pkt.pf_origin_level: " << handle_pkt.pf_origin_level << " fill_level: " << fill_level << std::endl;
+    }
+  }
 
   return true;
+}
+
+uint32_t CACHE::record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc)
+{
+    {
+      auto current_cpu = cpu_id;
+      auto current_cycle_ = current_cycle;
+      auto cpu_retired_instruction_ = ooo_cpu[cpu_id]->num_retired;
+      auto cpu_current_cycle_ = ooo_cpu[cpu_id]->current_cycle;
+      auto access = sim_access[cpu_id][LOAD];
+      auto miss = sim_miss[cpu_id][LOAD];
+      auto hit = sim_hit[cpu_id][LOAD];
+      auto block_count_ = block_count[cpu_id][LOAD];
+      //(uint32_t cpu, uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit, uint64_t miss, uint64_t
+      // block_count)
+      this->BLOCKSIZE = monitor->add_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_, cycle_ipc, all_ipc);
+    }
+    return this->BLOCKSIZE;
 }
 
 bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)

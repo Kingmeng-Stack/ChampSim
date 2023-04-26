@@ -27,6 +27,7 @@
 #include "memory_class.h"
 #include "ooo_cpu.h"
 #include "operable.h"
+#include "monitor.h"
 
 // virtual address space prefetching
 #define VA_PREFETCH_TRANSLATION_LATENCY 2
@@ -37,6 +38,7 @@ class CACHE : public champsim::operable, public MemoryRequestConsumer, public Me
 {
 public:
   uint32_t cpu;
+  Monitor* monitor;
   const std::string NAME;
   const uint32_t NUM_SET, NUM_WAY, WQ_SIZE, RQ_SIZE, PQ_SIZE, MSHR_SIZE;
   const uint32_t HIT_LATENCY, FILL_LATENCY, OFFSET_BITS;
@@ -60,14 +62,24 @@ public:
 
   std::list<PACKET> MSHR; // MSHR
 
+  std::vector<uint32_t> base_cal_block_size_rules = std::vector<uint32_t>();
+  uint32_t Stages = 0;
+
   uint64_t sim_access[NUM_CPUS][NUM_TYPES] = {}, sim_hit[NUM_CPUS][NUM_TYPES] = {}, sim_miss[NUM_CPUS][NUM_TYPES] = {}, roi_access[NUM_CPUS][NUM_TYPES] = {},
-           roi_hit[NUM_CPUS][NUM_TYPES] = {}, roi_miss[NUM_CPUS][NUM_TYPES] = {};
+           roi_hit[NUM_CPUS][NUM_TYPES] = {}, roi_miss[NUM_CPUS][NUM_TYPES] = {}, block_count[NUM_CPUS][NUM_TYPES] = {};
 
   uint64_t RQ_ACCESS = 0, RQ_MERGED = 0, RQ_FULL = 0, RQ_TO_CACHE = 0, PQ_ACCESS = 0, PQ_MERGED = 0, PQ_FULL = 0, PQ_TO_CACHE = 0, WQ_ACCESS = 0, WQ_MERGED = 0,
-           WQ_FULL = 0, WQ_FORWARD = 0, WQ_TO_CACHE = 0;
+           WQ_FULL = 0, WQ_FORWARD = 0, WQ_TO_CACHE = 0, BLOCKSIZE = 16;
 
   uint64_t total_miss_latency = 0;
 
+  // add fuctions
+  void set_blocksize(uint32_t cpu_id, uint32_t v);
+  void set_base_cal_block_size_rules(std::vector<uint32_t> v);
+  void monitor_initialize(uint32_t cpu_id, uint64_t limit_threshold, std::string name, std::string trace_name, std::string performance_data, uint32_t v);
+  void end_record(uint32_t cpu);
+  uint32_t record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc);
+  Monitor* get_monitor();
   // functions
   int add_rq(PACKET* packet) override;
   int add_wq(PACKET* packet) override;
