@@ -39,7 +39,6 @@ uint8_t warmup_complete[NUM_CPUS] = {}, simulation_complete[NUM_CPUS] = {}, all_
 uint32_t LIMIT_THRESHOLD = 0;
 std::array<CACHE*, NUM_CACHES> monitor_caches;
 std::array<uint64_t, NUM_CACHES> Previous_value;
-std::array<std::string, NUM_CPUS> logs;
 uint32_t CRYCLE = 0;
 
 uint64_t warmup_instructions = 1000000, simulation_instructions = 10000000;
@@ -292,7 +291,7 @@ void finish_warmup()
   for (uint32_t i = 0; i < NUM_CPUS; i++) {
     cout << "Warmup complete CPU " << i << " instructions: " << ooo_cpu[i]->num_retired << " cycles: " << ooo_cpu[i]->current_cycle;
     cout << " (Simulation time: " << elapsed_hour << " hr " << elapsed_minute << " min " << elapsed_second << " sec) " << endl;
-
+    monitor_caches[i]->end_record(i);
     ooo_cpu[i]->begin_sim_cycle = ooo_cpu[i]->current_cycle;
     ooo_cpu[i]->begin_sim_instr = ooo_cpu[i]->num_retired;
 
@@ -308,7 +307,6 @@ void finish_warmup()
 
     for (auto it = caches.rbegin(); it != caches.rend(); ++it)
       reset_cache_stats(i, *it);
-    monitor_caches[i]->end_record(i);
   }
   cout << endl;
 
@@ -341,7 +339,6 @@ int main(int argc, char** argv)
   {
     for (int i = 0; i < NUM_CPUS; i++) {
       Previous_value[i] = 0;
-      logs[i] = std::string("[");
     }
   }
   // interrupt signal hanlder
@@ -519,17 +516,8 @@ int main(int argc, char** argv)
       while (ooo_cpu[i]->fetch_stall == 0 && ooo_cpu[i]->instrs_to_read_this_cycle > 0) {
         ooo_cpu[i]->init_instruction(traces[i]->get());
       }
-      // && (ooo_cpu[i]->next_print_instruction != Previous_value[i] || Previous_value[i] ==0)
-      // heartbeat information
-      if (show_heartbeat && monitor_caches[i] != nullptr && monitor_caches[i]->sim_access[i][LOAD]!= 0 && monitor_caches[i]->sim_access[i][LOAD] % LIMIT_THRESHOLD == 0) {
-        //std::cout<< "--- Heartbeat CPU " << i << " Previous_value " << Previous_value[i] << " next_print_instruction " << ooo_cpu[i]->next_print_instruction << std::endl;
-        if (Previous_value[i] == monitor_caches[i]->sim_access[i][LOAD])
-        {
-          //std::cout<< "--- Heartbeat CPU " << i << " Previous_value " << Previous_value[i] << " next_print_instruction " << ooo_cpu[i]->next_print_instruction << std::endl;
-                    continue;
-        }
+      if (show_heartbeat && monitor_caches[i] != nullptr && monitor_caches[i]->sim_access[i][LOAD]!= 0 && monitor_caches[i]->sim_access[i][LOAD] - Previous_value[i] >= LIMIT_THRESHOLD) {
 
-        
         float cumulative_ipc;
         if (warmup_complete[i])
           cumulative_ipc = (1.0 * (ooo_cpu[i]->num_retired - ooo_cpu[i]->begin_sim_instr)) / (ooo_cpu[i]->current_cycle - ooo_cpu[i]->begin_sim_cycle);
@@ -548,7 +536,6 @@ int main(int argc, char** argv)
         ooo_cpu[i]->last_sim_instr = ooo_cpu[i]->num_retired;
         ooo_cpu[i]->last_sim_cycle = ooo_cpu[i]->current_cycle;
         Previous_value[i] = monitor_caches[i]->sim_access[i][LOAD];
-        // logs[i] += std::to_string(heartbeat_ipc) + ",";
       }
 
       // check for warmup

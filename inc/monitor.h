@@ -25,7 +25,6 @@ private:
   std::vector<uint32_t> BLOCKS_DATA;
   uint32_t bs;
 
-
 public:
   bool warmup_flag;
   Monitor(uint32_t cpu_id, uint64_t limit_threshold, std::string name, std::string trace_name, std::string blocks_data, uint32_t block_size)
@@ -51,7 +50,8 @@ public:
     }
 
     this->warmup_flag = true;
-    std::cout<<"Monitor: "<<this->NAME<<" is created cpu_id: "<<this->cpu_id<<" LIMIT_THRESHOLD: "<<this->LIMIT_THRESHOLD<<" trace_name: "<<this->trace_name<<" blocks_data: "<<this->BLOCKS_DATA.size()<<" block_size: "<<this->bs<<std::endl;
+    std::cout << "Monitor: " << this->NAME << " is created cpu_id: " << this->cpu_id << " LIMIT_THRESHOLD: " << this->LIMIT_THRESHOLD
+              << " trace_name: " << this->trace_name << " blocks_data: " << this->BLOCKS_DATA.size() << " block_size: " << this->bs << std::endl;
   }
 
   uint32_t get_block_size()
@@ -60,24 +60,18 @@ public:
     auto cycle = this->RECORDS.size();
     if (this->BLOCKS_DATA.size() > cycle) {
       next_bs = this->BLOCKS_DATA[cycle];
-    }
-    else {
+    } else {
       next_bs = this->bs;
     }
     return next_bs;
   }
 
-
-
   uint32_t update_cache_stats(uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit, uint64_t miss,
                               uint64_t block_count, float crycle_ipc, float all_ipc)
   {
-    // first store the current record to the RECORDS
-    //if (std::get<0>(CACHE_STATS) == 0) {
-      std::get<0>(CACHE_STATS) = current_cycle;
-      std::get<1>(CACHE_STATS) = cpu_retired_inst;
-      std::get<2>(CACHE_STATS) = cpu_current_cycle;
-    //}
+    std::get<0>(CACHE_STATS) = current_cycle;
+    std::get<1>(CACHE_STATS) = cpu_retired_inst;
+    std::get<2>(CACHE_STATS) = cpu_current_cycle;
     std::get<3>(CACHE_STATS) = access - std::get<3>(CACHE_STATS);
     std::get<4>(CACHE_STATS) = hit - std::get<4>(CACHE_STATS);
     std::get<5>(CACHE_STATS) = miss - std::get<5>(CACHE_STATS);
@@ -169,7 +163,8 @@ public:
     std::string json_str = "{";
     json_str += "\"CacheName\":\"" + this->NAME + "\",";
     json_str += "\"BlockSize\":" + std::to_string(BLOCK_SIZE) + ",";
-    json_str += "\"ActualBlockSize\":" + (this->warmup_flag ? std::to_string(this->bs) : (this->BLOCKS_DATA.size() == 0 ? std::to_string(this->bs) : "CaL_Drive")) + ",";
+    json_str += "\"ActualBlockSize\":"
+                + (this->warmup_flag ? std::to_string(this->bs) : (this->BLOCKS_DATA.size() == 0 ? std::to_string(this->bs) : "\"CaL_Drive\"")) + ",";
     json_str += "\"TraceName\":\"" + this->trace_name + "\",";
     json_str += "\"CpuId\":" + std::to_string(this->cpu_id) + ",";
     json_str += "\"LeastState\": {";

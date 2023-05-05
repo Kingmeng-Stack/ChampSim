@@ -340,6 +340,8 @@ bool CACHE::readlike_miss(PACKET& handle_pkt)
         uint64_t pf_base_addr = (virtual_prefetch ? handle_pkt.v_address : handle_pkt.address) & ~bitmask(match_offset_bits ? 0 : OFFSET_BITS);
         for (int i = 1; i < BLOCKSIZE / BLOCK_SIZE; i++) {
           uint64_t pf_addr = pf_base_addr + i * BLOCK_SIZE;
+          if (pf_addr == 0)
+            break;
           prefetch_line(pf_addr, true, 0);
         }
     }
@@ -363,8 +365,6 @@ uint32_t CACHE::record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc)
       auto miss = sim_miss[cpu_id][LOAD];
       auto hit = sim_hit[cpu_id][LOAD];
       auto block_count_ = block_count[cpu_id][LOAD];
-      //(uint32_t cpu, uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit, uint64_t miss, uint64_t
-      // block_count)
       this->BLOCKSIZE = monitor->add_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_, cycle_ipc, all_ipc);
     }
     return this->BLOCKSIZE;
