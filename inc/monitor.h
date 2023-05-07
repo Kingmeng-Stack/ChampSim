@@ -10,7 +10,7 @@
 extern std::array<O3_CPU*, NUM_CPUS> ooo_cpu;
 
 typedef std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, float, float>
-    cache_stats_t; // current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count
+    cache_stats_t; // current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count, crycle_ipc, avg_ipc
 
 class Monitor
 {
@@ -20,10 +20,11 @@ private:
   std::string trace_name;
   uint64_t LIMIT_THRESHOLD;
   std::vector<cache_stats_t> RECORDS;
-  cache_stats_t CACHE_STATS; // current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count
+  cache_stats_t CACHE_STATS; // current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count, crycle_ipc, avg_ipc
   bool COMPLET_FLAG;
   std::vector<uint32_t> BLOCKS_DATA;
   uint32_t bs;
+  uint32_t base_bs;
 
 public:
   bool warmup_flag;
@@ -37,6 +38,7 @@ public:
     this->CACHE_STATS = std::make_tuple(0, 0, 0, 0, 0, 0, 0, 0.0, 0.0);
     this->COMPLET_FLAG = false;
     this->bs = block_size;
+    this->base_bs = BLOCK_SIZE;
     if (blocks_data.size() != 0) {
       std::string delimiter = " ";
       size_t pos = 0;
@@ -56,6 +58,15 @@ public:
 
   uint32_t get_block_size()
   {
+    // If the warmup_flag or COMPLET_FLAG is true, return the current block size
+    if (this->warmup_flag)
+    {
+      return this->base_bs;
+    }
+    if (this->COMPLET_FLAG)
+    {
+      return this->bs;
+    }
     auto next_bs = 0;
     auto cycle = this->RECORDS.size();
     if (this->BLOCKS_DATA.size() > cycle) {
@@ -85,9 +96,15 @@ public:
   }
 
   uint32_t add_record(uint32_t cpuid, uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit,
-                      uint64_t miss, uint64_t block_count, float crycle_ipc, float all_ipc)
+                      uint64_t miss, uint64_t block_count, uint32_t current_bs, float crycle_ipc, float all_ipc)
   {
-
+    {
+      if ((!this->warmup_flag) || (!this->COMPLET_FLAG)) {
+        if (this->get_block_size() != current_bs) {
+          std::cout << "ERROR: add_record current_bs: " << current_bs << " is not the same as the monitor's bs: " << this->get_block_size() << " cycle: " << this->RECORDS.size() << "  cpu_id: " << this->cpu_id << "complet_flag: " << this->COMPLET_FLAG << std::endl;
+        }
+      }
+    }
     cache_stats_t current_state = std::make_tuple(current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count, crycle_ipc, all_ipc);
     if (cpuid != this->cpu_id) {
       // If the cpuid is not the same as the monitor's cpuid, return directly
@@ -100,21 +117,20 @@ public:
       return this->bs;
     }
 
-    if (std::get<CYCLE>(current_state) % LIMIT_THRESHOLD != 0) {
+    if (std::get<CYCLE>(current_state) - std::get<CYCLE>(this->CACHE_STATS) < 0) {
       // If the number of misses is not a multiple of the threshold, return directly
+      std::cout << "ERROR: add_record current_cycle: " << std::get<CYCLE>(current_state) << " is less than CACHE_STATS: " << std::get<CYCLE>(this->CACHE_STATS) << std::endl;
       return this->bs;
     }
     // campare this record with the previous one
     if (std::get<CYCLE>(this->CACHE_STATS) == std::get<CYCLE>(current_state)) {
       // If the number of misses does not change, it is not recorded
+      std::cout << "ERROR: add_record current_cycle: " << std::get<CYCLE>(current_state) << " is the same as CACHE_STATS: " << std::get<CYCLE>(this->CACHE_STATS) << std::endl;
       return this->bs;
     }
     ooo_cpu[cpuid]->next_print_instruction = std::get<CYCLE>(current_state);
 
     auto current_block_size = update_cache_stats(current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count, crycle_ipc, all_ipc);
-    if (this->warmup_flag) {
-      return this->bs;
-    }
     return current_block_size;
   }
 
@@ -143,14 +159,8 @@ public:
       return;
     }
 
-    // if (std::get<5>(this->CACHE_STATS) != 0) {
-    //   this->RECORDS.push_back(this->CACHE_STATS);
-    // }
     this->CACHE_STATS = std::make_tuple(current_cycle, cpu_retired_inst, cpu_current_cycle, access, hit, miss, block_count, 0, 0);
 
-    // if (miss != 0 && miss % LIMIT_THRESHOLD == 0) {
-    //   this->RECORDS.push_back(this->CACHE_STATS);
-    // }
 
     return;
   }

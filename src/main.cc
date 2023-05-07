@@ -292,6 +292,7 @@ void finish_warmup()
     cout << "Warmup complete CPU " << i << " instructions: " << ooo_cpu[i]->num_retired << " cycles: " << ooo_cpu[i]->current_cycle;
     cout << " (Simulation time: " << elapsed_hour << " hr " << elapsed_minute << " min " << elapsed_second << " sec) " << endl;
     monitor_caches[i]->end_record(i);
+    Previous_value[i] = 0;
     ooo_cpu[i]->begin_sim_cycle = ooo_cpu[i]->current_cycle;
     ooo_cpu[i]->begin_sim_instr = ooo_cpu[i]->num_retired;
 
@@ -307,17 +308,11 @@ void finish_warmup()
 
     for (auto it = caches.rbegin(); it != caches.rend(); ++it)
       reset_cache_stats(i, *it);
+    
+    monitor_caches[i]->save_stats_clear(std::string("./"), std::string("WARMUP"), false);
   }
   cout << endl;
 
-  {
-    for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
-      auto monitor = (*it)->monitor;
-      if (monitor != nullptr) {
-        monitor->save_and_clear(std::string("./"), std::string("WARMUP"), false);
-      }
-    }
-  }
 
   // reset DRAM stats
   for (uint32_t i = 0; i < DRAM_CHANNELS; i++) {
@@ -568,65 +563,10 @@ int main(int argc, char** argv)
     }
   }
 
-  {
-    for (auto it = caches.rbegin(); it != caches.rend(); ++it) {
-      auto monitor = (*it)->monitor;
-      if (monitor != nullptr) {
-        monitor->save_and_clear(std::string("./"), std::string("MAIN"),false);
-      }
-
-      auto cache = (*it);
-      auto access = cache->sim_access;
-      auto miss = cache->sim_miss;
-      auto hit = cache->sim_hit;
-      auto block_count = cache->block_count;
-      {
-        cout << "----------------------------A--------------------------------" << endl;
-        // PRINT CACHE ACCESS THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
-        {
-          cout << "cache " << cache->NAME << " access: " << endl;
-          for (uint32_t i = 0; i < NUM_CPUS; i++) {
-            for (uint32_t j = 0; j < NUM_TYPES; j++) {
-              cout << access[i][j] << " ";
-            }
-            cout << endl;
-          }
-        }
-        // PRINT CACHE MISS THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
-        {
-          cout << "cache " << cache->NAME << " miss: " << endl;
-          for (uint32_t i = 0; i < NUM_CPUS; i++) {
-            for (uint32_t j = 0; j < NUM_TYPES; j++) {
-              cout << miss[i][j] << " ";
-            }
-            cout << endl;
-          }
-        }
-        // PRINT CACHE HIT THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
-        {
-          cout << "cache " << cache->NAME << " hit: " << endl;
-          for (uint32_t i = 0; i < NUM_CPUS; i++) {
-            for (uint32_t j = 0; j < NUM_TYPES; j++) {
-              cout << hit[i][j] << " ";
-            }
-            cout << endl;
-          }
-        }
-        // PRINT CACHE BLOCK COUNT THIS IS [NUM_CPUS][NUM_TYPES] ARRAY
-        {
-          cout << "cache " << cache->NAME << " block count: " << endl;
-          for (uint32_t i = 0; i < NUM_CPUS; i++) {
-            for (uint32_t j = 0; j < NUM_TYPES; j++) {
-              cout << block_count[i][j] << " ";
-            }
-            cout << endl;
-          }
-        }
-        cout << "----------------------------B--------------------------------" << endl;
-      }
-    }
+  for (uint32_t i = 0; i < NUM_CPUS; i++) {
+    monitor_caches[i]->save_stats_clear(std::string("./"), std::string("MAIN"),false);
   }
-
+  
   uint64_t elapsed_second = (uint64_t)(time(NULL) - start_time), elapsed_minute = elapsed_second / 60, elapsed_hour = elapsed_minute / 60;
   elapsed_minute -= elapsed_hour * 60;
   elapsed_second -= (elapsed_hour * 3600 + elapsed_minute * 60);

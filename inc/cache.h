@@ -78,6 +78,7 @@ public:
   void set_base_cal_block_size_rules(std::vector<uint32_t> v);
   void monitor_initialize(uint32_t cpu_id, uint64_t limit_threshold, std::string name, std::string trace_name, std::string performance_data, uint32_t v);
   void end_record(uint32_t cpu);
+  void save_stats_clear(std::string file_folder, std::string mark, bool warmup_flag);
   uint32_t record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc);
   Monitor* get_monitor();
   // functions

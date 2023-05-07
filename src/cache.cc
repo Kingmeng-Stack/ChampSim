@@ -62,7 +62,7 @@ void CACHE::end_record(uint32_t cpu)
     return;
   auto current_cpu = cpu;
   auto current_cycle_ = current_cycle;
-  auto cpu_retired_instruction_ = ooo_cpu[cpu]->num_branch;
+  auto cpu_retired_instruction_ = ooo_cpu[cpu]->num_retired;
   auto cpu_current_cycle_ = ooo_cpu[cpu]->current_cycle;
   auto access = sim_access[cpu][LOAD];
   auto miss = sim_miss[cpu][LOAD];
@@ -71,6 +71,15 @@ void CACHE::end_record(uint32_t cpu)
   //(uint32_t cpu, uint64_t current_cycle, uint64_t cpu_retired_inst, uint64_t cpu_current_cycle, uint64_t access, uint64_t hit, uint64_t miss, uint64_t
   // block_count)
   monitor->end_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_);
+}
+
+void CACHE::save_stats_clear(std::string file_folder, std::string mark, bool warmup_flag)
+{
+  if (monitor == nullptr)
+    return;
+  monitor->save_and_clear(file_folder, mark, warmup_flag);
+  std::cout<< "cache: " << this->NAME << " set  blocksize from: " << this->BLOCKSIZE << " to " << monitor->get_block_size() << "  cpu: " << cpu << std::endl;
+  this->BLOCKSIZE = monitor->get_block_size();
 }
 
 Monitor* CACHE::get_monitor() { return monitor; }
@@ -356,6 +365,7 @@ bool CACHE::readlike_miss(PACKET& handle_pkt)
 
 uint32_t CACHE::record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc)
 {
+  uint32_t current_bs = this->BLOCKSIZE;
     {
       auto current_cpu = cpu_id;
       auto current_cycle_ = current_cycle;
@@ -365,7 +375,11 @@ uint32_t CACHE::record_point(uint32_t cpu_id, float cycle_ipc, float all_ipc)
       auto miss = sim_miss[cpu_id][LOAD];
       auto hit = sim_hit[cpu_id][LOAD];
       auto block_count_ = block_count[cpu_id][LOAD];
-      this->BLOCKSIZE = monitor->add_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_, cycle_ipc, all_ipc);
+      this->BLOCKSIZE = monitor->add_record(current_cpu, current_cycle_, cpu_retired_instruction_, cpu_current_cycle_, access, hit, miss, block_count_, this->BLOCKSIZE, cycle_ipc, all_ipc);
+    }
+    if (this->BLOCKSIZE != current_bs)
+    {
+      std::cout << "BLOCKSIZE: " << current_bs << " next_bs: " << this->BLOCKSIZE << " cpu_id: " << cpu_id << std::endl;
     }
     return this->BLOCKSIZE;
 }
